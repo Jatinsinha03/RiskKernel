@@ -1,17 +1,33 @@
 {
-  "name": "temp-app",
+  "name": "risk-kernel",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "tsx prisma/seed.ts",
+    "index:events": "tsx scripts/indexer.ts",
+    "agent": "tsx scripts/agent.ts",
+    "agent:once": "tsx scripts/agent.ts --once",
+    "agent:status": "tsx scripts/agent.ts --status",
+    "agent:simulate": "tsx scripts/agent.ts --simulate"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@openuidev/react-ui": "^0.18.1",
+    "@prisma/client": "^6.19.3",
+    "clsx": "^2.1.1",
+    "ethers": "^6.17.0",
+    "lucide-react": "^1.62.0",
     "next": "16.4.3",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-markdown": "^10.1.0",
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
@@ -20,7 +36,9 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

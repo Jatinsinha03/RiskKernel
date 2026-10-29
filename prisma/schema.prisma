@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String        @id @default(uuid())
+  address   String        @unique // lowercase 0x...
+  nonce     String        // randomly generated sign-in challenge
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  vaults    Vault[]
+  messages  ChatMessage[]
+}
+
+model Vault {
+  id                String            @id @default(uuid())
+  address           String            @unique // lowercase 0x... contract address
+  ownerAddress      String
+  user              User?             @relation(fields: [ownerAddress], references: [address])
+  baseAsset         String            @default("0xF1B50eD67A9e2CC94Ad3c477779E2d4cBfFf9029") // USDT
+  baseAssetSymbol   String            @default("USDT")
+  baseAssetDecimals Int               @default(6)
+  createdBlock      Int               @default(0)
+  status            String            @default("ACTIVE") // ACTIVE, PAUSED, FROZEN
+  enabled           Boolean           @default(true)     // Worker enablement flag
+
+  // Mandate & Policy fields (cached from chain)
+  balance           String            @default("0")
+  peakValue         String            @default("0")
+  maxDrawdownBps    Int               @default(500) // 5% = 500 bps
+  maxPositionSize   String            @default("1000") // in base units or display units
+  maxDailyVolume    String            @default("5000")
+  dailyVolumeUsed   String            @default("0")
+  maxSlippageBps    Int               @default(50) // 0.5%
+  approvalThreshold String            @default("2500")
+  agentAddress      String?
+  allowedTokens     String[]          @default([])
+  allowedPools      String[]          @default([])
+  allowedModules    String[]          @default([])
+
+  // Queued riskier changes
+  pendingPolicy     Json?             // { proposedAt, unlockAt, changes: [...] }
+  cachedSettings    Json?             // flexible snapshot
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  events            ActivityEvent[]
+  opportunities     Opportunity[]
+  approvals         ApprovalRequest[]
+
+  @@index([ownerAddress])
+}
+
+model ActivityEvent {
+  id           String   @id @default(uuid())
+  vaultAddress String
+  vault        Vault    @relation(fields: [vaultAddress], references: [address], onDelete: Cascade)
+  eventType    String   // DEPOSIT, WITHDRAW, POLICY_UPDATE, POLICY_QUEUED, POLICY_CANCELLED, AGENT_GRANTED, AGENT_REVOKED, TRADE_EXECUTED, CIRCUIT_BREAKER_TRIPPED, PAUSED, UNPAUSED
+  txHash       String
+  logIndex     Int      @default(0)
+  blockNumber  Int      @default(0)
+  timestamp    DateTime @default(now())
+  details      Json     // rich parameters: amounts, diffs, tokens, execution data
+  createdAt    DateTime @default(now())
+
+  @@index([vaultAddress, timestamp])
+  @@index([txHash])
+}
+
+model IndexerCursor {
+  id                 String   @id @default(uuid())
+  chainId            Int      @unique
+  lastProcessedBlock Int      @default(0)
+  updatedAt          DateTime @updatedAt
+}
+
+model ChatMessage {
+  id           String   @id @default(uuid())
+  userAddress  String
+  user         User?    @relation(fields: [userAddress], references: [address])
+  vaultAddress String?
+  role         String   // "user" | "assistant" | "system"
+  content      String
+  diffData     Json?    // Propose-change structured diff: { fields: [{ field, oldValue, newValue, isSafer }] }
+  createdAt    DateTime @default(now())
+
+  @@index([userAddress, vaultAddress])
+}
+
+model Token {
+  id        String   @id @default(uuid())
+  address   String   @unique // lowercase 0x...
+  symbol    String
+  name      String?
+  decimals  Int      @default(18)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Pool {
+  id        String   @id @default(uuid())
+  address   String   @unique // lowercase 0x...
+  token0    String   // lowercase 0x...
+  token1    String   // lowercase 0x...
+  feeTier   Int      // e.g. 100, 500, 3000, 10000
+  liquidity String   @default("0")
+  price0    String?
+  price1    String?
+  enabled   Boolean  @default(true)
+  lastSeen  DateTime @default(now())
+
+  @@index([token0, token1])
+}
+
+model Opportunity {
+  id              String            @id @default(uuid())
+  vaultAddress    String
+  vault           Vault             @relation(fields: [vaultAddress], references: [address], onDelete: Cascade)
+  route           Json              // Token path and DEX steps
+  cycleHash       String?           // bytes32 route hash
+  tradeAmount     String
+  estimatedProfit String
+  netProfitBps    Int               @default(0)
+  minProfit       String
+  gasEstimate     String?
+  status          String            @default("detected") // detected, skipped, sent, confirmed, reverted, awaiting_approval
+  reason          String?
+  aiScore         Float?
+  aiReason        String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  approvals       ApprovalRequest[]
+  attempts        Attempt[]
+
+  @@index([vaultAddress, status])
+}
+
+model Attempt {
+  id            String       @id @default(uuid())
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  vaultAddress  String
+  txHash        String?
+  nonce         Int
+  amountIn      String
+  minReturn     String
+  status        String       @default("prepared") // prepared, sent, confirmed, reverted, dropped
+  gasPriceGwei  String?
+  gasUsed       String?
+  error         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([vaultAddress, status])
+  @@index([txHash])
+}
+
+model ApprovalRequest {
+  id            String       @id @default(uuid())
+  vaultAddress  String
+  vault         Vault        @relation(fields: [vaultAddress], references: [address], onDelete: Cascade)
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  tradeAmount   String
+  summary       String
+  cycleHash     String?
+  minReturn     String?
+  expiry        DateTime
+  status        String       @default("pending") // pending, approved, rejected, expired, used, failed
+  signature     String?      // EIP-712 signed typed data
+  signerAddress String?
+  nonce         String       // anti-replay nonce
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([vaultAddress, status])
+}
+
+model WorkerHeartbeat {
+  id                 String   @id @default(uuid())
+  workerId           String   @unique @default("primary")
+  lastLoopAt         DateTime @default(now())
+  lastBlock          Int      @default(0)
+  agentHskBalance    String   @default("0")
+  status             String   @default("running") // running, idle, waiting_approval, offline, error
+  activeVaultsCount  Int      @default(0)
+  candidatesCount    Int      @default(0)
+  simulationsCount   Int      @default(0)
+  sendsCount         Int      @default(0)
+  lastError          String?
+  updatedAt          DateTime @updatedAt
+}
+
+model WorkerFlag {
+  id        String   @id @default(uuid())
+  key       String   @unique // e.g. "GLOBAL_KILL_SWITCH"
+  value     String   // "true" or "false"
+  updatedAt DateTime @updatedAt
+}
